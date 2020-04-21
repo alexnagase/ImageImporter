@@ -2,41 +2,64 @@
 
 import requests
 import hashlib
-import json
 
-okta_url = 'https://[COMPANY].okta.com'
-api_token = 'TOKEN'
+url = 'https://COMPANY.okta.com'
+token = 'TOKEN'
 
 headers = {
+    'Authorization': 'SSWS ' + token,
     'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'Authorization': 'SSWS ' + api_token
+    'Content-Type': 'application/json'
 }
 
-# pull user data from Okta
-userData = requests.get(okta_url + '/api/v1/users/', headers=headers).json()
 
-for item in userData:
-    try:
-        # check if entry has Bamboo HR employee number, KeyError means no entry and will skip
-        x = item['profile']['employeeNumber']
+def get_users(**kwargs):
+    # Get Okta users with params, more info: https://developer.okta.com/docs/reference/api/users/#list-users
 
-        # collect profile values
-        userId = str(item['id'])
-        email = item['profile']['email']
-        emailHash = hashlib.md5(email.encode('utf-8')).hexdigest()
+    return requests.get(url + '/api/v1/users', params=kwargs, headers=headers)
 
-        # build data to POST back to Okta
-        data = {}
-        profile = {}
-        profile["profileImage"] = "https://COMPANY.bamboohr.com/employees/photos/?h=" + emailHash
-        data["profile"] = profile
 
-        # post
+def get_user_pages(**kwargs):
+    page = get_users(**kwargs)
+    while page:
+        yield page
+        page = get_next_page(page.links)
 
-        r = requests.post(okta_url + '/api/v1/users/' + userId, headers=headers, json=data)
-        print(r)
-        # print(email + ' has been updated')
 
-    except KeyError:
-        continue
+def get_next_page(links):
+    # Manage Okta response pagination with link headers https://developer.okta.com/docs/reference/api-overview/#pagination
+    next = links.get('next')
+    if next:
+        return requests.get(next['url'], headers=headers)
+    else:
+        return None
+
+
+for page in get_user_pages(limit=9, filter=''):
+    for user in page.json():
+
+        try:
+            # We only want profiles associated with BBHR employee number, KeyError means no BBHR entry and will skip
+            x = user['profile']['employeeNumber']
+
+            # Collect values from User's Okta profile
+            userId = str(user['id'])
+            email = user['profile']['email']
+            emailHash = hashlib.md5(email.encode('utf-8')).hexdigest()
+
+            # Build data to POST back to Okta
+            data = {}
+            profile = {}
+            profile["profileImage"] = "https://COMPANY.bamboohr.com/employees/photos/?h=" + emailHash
+            data["profile"] = profile
+
+            # POST back to Okta, print response codes
+
+            r = requests.post(url + '/api/v1/users/' + userId, headers=headers, json=data)
+            print(email + ' has been updated with response: ' + str(r))
+            # print(email + ' has been updated')
+
+        except KeyError:
+            #skipped entries
+            print("Skipping " + str(user['profile']['email']))
+            continue
